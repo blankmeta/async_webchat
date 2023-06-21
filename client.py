@@ -19,7 +19,7 @@ class Client:
         await asyncio.gather(self.receive(),
                              self.send())
 
-    async def receive(self):
+    async def receive(self) -> None:
         """Getting a new message."""
         while True:
             data = await self.__reader.read(1024)
