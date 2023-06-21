@@ -1,5 +1,4 @@
 import asyncio
-import pickle
 
 from aioconsole import ainput
 
@@ -12,20 +11,23 @@ class Client:
         self.__writer = None
 
     async def connect(self) -> None:
+        """Creating a new connection."""
         self.__reader, self.__writer = await asyncio.open_connection(
             self.__host,
             self.__port
         )
-        await asyncio.gather(self.receive_messages(),
-                             self.send_to_server())
+        await asyncio.gather(self.receive(),
+                             self.send())
 
-    async def receive_messages(self):
+    async def receive(self):
+        """Getting a new message."""
         while True:
             data = await self.__reader.read(1024)
             message = data.decode()[:-1]
             print(message)
 
-    async def send_to_server(self) -> None:
+    async def send(self) -> None:
+        """Sending a message."""
         while True:
             text = await ainput()
             text += '\r\n'
