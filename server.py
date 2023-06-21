@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from asyncio import StreamWriter, StreamReader
-from datetime import datetime
+from datetime import datetime, timedelta
 from threading import Timer
 from typing import Union, ForwardRef
 
@@ -49,15 +49,18 @@ class User:
         self.__nickname = ''
         self.__reports = set()
         self.__messages_count = 0
-        self.__delayed_messages = []
+        self.__first_message_datetime = None
 
     @property
     def is_banned(self):
         return len(self.__reports) >= Server.MAX_REPORTS_COUNT
 
     @property
-    def delayed_messages(self):
-        return self.__delayed_messages
+    def is_throttled(self):
+        return (self.__messages_count >= 20 and
+                (self.__first_message_datetime + timedelta(
+                    seconds=Server.THROTTLING_TIME)) > datetime.now()
+                )
 
     @property
     def address(self):
@@ -87,11 +90,18 @@ class User:
     def messages_count(self, value):
         self.__messages_count = value
 
+    @property
+    def first_message_datetime(self):
+        return self.__first_message_datetime
+
+    @first_message_datetime.setter
+    def first_message_datetime(self, value):
+        self.__first_message_datetime = value
+
     async def send_message(self, msg: Union[Message, str]):
         """Sending a message to user."""
-        logger.info(f'Sent message \n'
-                    f'{str(msg)} \n'
-                    f'to {self}')
+        logger.info(f'Sent message '
+                    f'{str(msg)}')
         self.__writer.write((str(msg) + '\n').encode('utf8'))
         await self.__writer.drain()
 
@@ -99,9 +109,6 @@ class User:
         """Getting a new message from user."""
         data = await self.__reader.read(1024)
         message = data.decode()[:-1]
-        logger.info(f'Got a new message\n'
-                    f'{message}\n'
-                    f'from {self}')
         return Message(message=message, sender=self)
 
     def clear_reports(self) -> None:
@@ -109,20 +116,23 @@ class User:
         logger.info(f'{self} has been unbanned')
         self.__reports = set()
 
+    def clear_messages_count(self) -> None:
+        logger.info(f'Cleared messages count for {self}')
+        self.__messages_count = 0
+
     def __repr__(self) -> str:
         return self.nickname
 
 
 class Server:
     NEWBIE_MESSAGES_LIMIT = 20
-    MAX_REPORTS_COUNT = 1
+    MAX_REPORTS_COUNT = 3
     MESSAGE_LIFETIME = 60 * 60
-    BAN_TIME = 10
+    BAN_TIME = 4 * 60 * 60
+    THROTTLING_TIME = 60 * 60
     PRIVATE_COMMAND = '/p'
     REPORT_COMMAND = '/report'
-    DELAY_MESSAGE = '/delay'
-
-    # DELAY = '/delay'
+    QUIT_COMMAND = '/quit'
 
     def __init__(self, host='127.0.0.1', port=8000):
         self.__host = host
@@ -145,6 +155,7 @@ class Server:
     async def client_connected(self, reader: StreamReader,
                                writer: StreamWriter):
         """Handling a connected user."""
+        await asyncio.sleep(1)
         address = writer.get_extra_info('peername')
         logger.info(f'New connection from {address}')
         new_user = User(address, reader, writer)
@@ -170,8 +181,12 @@ class Server:
         """Listening for user messages."""
         while True:
             msg = await user.get_message()
-            logger.info(f'Got new message {msg.message} from {msg.sender}')
+            logger.info(f'Got new message {msg.message}')
 
+            if msg.message.startswith(self.QUIT_COMMAND):
+                await msg.sender.send_message('Goodbye!')
+                await self._quit(msg.sender)
+                break
             if msg.message[0] == '/':
                 await self._parse_command(msg)
             else:
@@ -187,15 +202,27 @@ class Server:
 
     async def _send_to_group_chat(self, msg: Message) -> None:
         """Sending a message to the group chat."""
-        if msg.sender.is_banned:
-            await msg.sender.send_message('You have been banned for 4 hours')
+        sender = msg.sender
+
+        if sender.is_banned:
+            await sender.send_message('You have been banned for 4 hours')
+        elif sender.is_throttled:
+            throttling_time_end = (sender.first_message_datetime + timedelta(
+                seconds=Server.THROTTLING_TIME))
+            await sender.send_message(f'Only 20 messages per hour\n'
+                                      f'Retry after {throttling_time_end}')
         else:
             if msg.message[:-1]:
+                if sender.messages_count >= 20:
+                    sender.messages_count = 0
+                if sender.messages_count == 0:
+                    sender.first_message_datetime = datetime.now()
+                sender.messages_count += 1
                 self.history.append(msg)
                 Timer(self.MESSAGE_LIFETIME, self._delete_message,
                       args=(msg,)).start()
                 for user in self.users.values():
-                    if user != msg.sender:
+                    if user != sender:
                         await user.send_message(msg)
 
     async def _parse_command(self, msg):
@@ -206,8 +233,8 @@ class Server:
                 await self._send_private_message(body, msg)
             if command == self.REPORT_COMMAND:
                 await self._report_user(msg.sender, body[:-1])
-            # if command == self.DELAY_MESSAGE:
-            #     await self._delay_message(msg, body[:-1])
+            else:
+                raise CommandException('Wrong command\n')
         except CommandException as e:
             await msg.sender.send_message(e)
         except ValueError:
@@ -242,6 +269,8 @@ class Server:
         nickname, text = body.split(maxsplit=1)
         try:
             user = self.users[nickname]
+            if user == msg.sender:
+                raise CommandException('You cant send messages to you')
         except KeyError:
             raise CommandException('User not found')
         await user.send_message(
@@ -254,22 +283,15 @@ class Server:
 
     async def _report_user(self, user: User, user_to_block_nickname):
         user_to_block = self.users[user_to_block_nickname]
+        if user_to_block == user:
+            raise CommandException('You cant report yourself')
         user_to_block.reports.add(user)
         if len(user_to_block.reports) == self.MAX_REPORTS_COUNT:
             Timer(self.BAN_TIME, user_to_block.clear_reports).start()
         await user.send_message('Report is sent')
 
-    # def _delay_message(self, msg: Message, body: str):
-    #     try:
-    #         time, text = body.split(maxsplit=1)
-    #         time = datetime.strptime(time, '%d.%m.%Y-%H:%M')
-    #         seconds = (time - datetime.now()).seconds
-    #         timer = Timer(5, self._send_to_group_chat, args=(msg,))
-    #         timer.start()
-    #         msg.sender.delayed_messages.append(timer)
-    #     except ValueError:
-    #         raise CommandException('Please enter a correct date\n'
-    #                                'Example: 31.07.2023 22:15')
+    async def _quit(self, sender):
+        self.__users.pop(sender.nickname)
 
 
 if __name__ == '__main__':
