@@ -212,7 +212,7 @@ class Server:
             await sender.send_message(f'Only 20 messages per hour\n'
                                       f'Retry after {throttling_time_end}')
         else:
-            if msg.message[:-1]:
+            if msg.message.strip():
                 if sender.messages_count >= 20:
                     sender.messages_count = 0
                 if sender.messages_count == 0:
@@ -225,7 +225,7 @@ class Server:
                     if user != sender:
                         await user.send_message(msg)
 
-    async def _parse_command(self, msg):
+    async def _parse_command(self, msg: Message) -> None:
         """Parsing a user's command."""
         try:
             command, body = msg.message.split(maxsplit=1)
@@ -242,12 +242,12 @@ class Server:
         except Exception as e:
             logger.error(e)
 
-    async def _set_nickname(self, user):
+    async def _set_nickname(self, user: User) -> None:
         """Setting new user's nickname."""
         while True:
             msg = await user.get_message()
             nickname = msg.message[:-1]
-            if self._is_valid_nickname(nickname):
+            if await self._is_valid_nickname(nickname):
                 break
             await user.send_message(
                 'User with this nickname is already in chat\n'
@@ -256,7 +256,7 @@ class Server:
         self.users[nickname] = user
         await user.send_message(f'Welcome here, {nickname}\n')
 
-    def _is_valid_nickname(self, nickname):
+    async def _is_valid_nickname(self, nickname: str) -> bool:
         """User's unique nickname validation."""
         if nickname:
             if nickname not in self.users:
@@ -276,12 +276,15 @@ class Server:
         await user.send_message(
             Message(text, msg.sender, is_private=True))
 
-    def _delete_message(self, msg):
+    def _delete_message(self, msg: Message) -> None:
         """Deleting a message from chat history."""
         logger.info(f'{msg} has been removed from history due to the lifetime')
         self.history.remove(msg)
 
-    async def _report_user(self, user: User, user_to_block_nickname):
+    async def _report_user(self, user: User,
+                           user_to_block_nickname: str
+                           ) -> None:
+        """Reporting a user."""
         user_to_block = self.users[user_to_block_nickname]
         if user_to_block == user:
             raise CommandException('You cant report yourself')
@@ -290,7 +293,7 @@ class Server:
             Timer(self.BAN_TIME, user_to_block.clear_reports).start()
         await user.send_message('Report is sent')
 
-    async def _quit(self, sender):
+    async def _quit(self, sender: User) -> None:
         self.__users.pop(sender.nickname)
 
 
