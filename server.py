@@ -125,11 +125,11 @@ class User:
 
 
 class Server:
-    NEWBIE_MESSAGES_LIMIT = 20
-    MAX_REPORTS_COUNT = 3
-    MESSAGE_LIFETIME = 60 * 60
-    BAN_TIME = 4 * 60 * 60
-    THROTTLING_TIME = 60 * 60
+    NEWBIE_MESSAGES_LIMIT = 20  # Limit of group chat messages history
+    MAX_REPORTS_COUNT = 3  # Reports count to block a user
+    MESSAGE_LIFETIME = 60 * 60  # Message lifetime before its deleting
+    BAN_TIME = 4 * 60 * 60  # Time user will be blocked in the group chat
+    THROTTLING_TIME = 60 * 60  # Time to flush user's message throttling
     PRIVATE_COMMAND = '/p'
     REPORT_COMMAND = '/report'
     QUIT_COMMAND = '/quit'

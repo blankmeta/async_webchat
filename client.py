@@ -10,6 +10,10 @@ class Client:
         self.__reader = None
         self.__writer = None
 
+    @property
+    def writer(self):
+        return self.__writer
+
     async def connect(self) -> None:
         """Creating a new connection."""
         self.__reader, self.__writer = await asyncio.open_connection(
@@ -36,7 +40,8 @@ class Client:
 
 
 if __name__ == "__main__":
+    client = Client()
     try:
-        asyncio.run(Client().connect())
-    except Exception as e:
-        print(e)
+        asyncio.run(client.connect())
+    except KeyboardInterrupt as e:
+        client.writer.write('/quit\r\n'.encode('utf8'))
